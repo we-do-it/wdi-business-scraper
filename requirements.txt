@@ -1,0 +1,6 @@
+crawl4ai
+pandas
+openpyxl
+playwright
+python-dotenv
+aiohttp
