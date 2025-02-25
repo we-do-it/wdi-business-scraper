@@ -6,6 +6,7 @@ import pandas as pd
 from playwright.async_api import async_playwright, Browser, Page
 from datetime import datetime
 import re
+import unicodedata
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -53,8 +54,8 @@ class BelgianCompanyScraper:
         
         try:
             while True:
-                # 2 pages for testing
-                if i >= 2:
+                # 1 page for testing
+                if i >= 5:
                     break
 
                 await page.wait_for_selector('#results')
@@ -86,7 +87,7 @@ class BelgianCompanyScraper:
             await playwright.stop()
         
         return company_numbers
-    
+
     async def search_kbo_numbers(self, filename: str):
         """Search company numbers on KBO website"""
         playwright = await async_playwright().start()
@@ -108,20 +109,110 @@ class BelgianCompanyScraper:
                     await page.fill('#nummer', number)
                     await page.click('#actionLu')
                     await page.wait_for_load_state('networkidle')
-                    
-                    # Scraping coming here
-                    
-                    logger.info(f"Successfully searched number: {number}")
 
+                    is_active = await page.is_visible('.pageactief')
+                    if not is_active:
+                        logger.info(f"Company {number} is not active, skipping...")
+                        await page.wait_for_timeout(3000)
+                        await page.goto(self.kbo_base_url + "/zoeknummerform.html")
+                        continue
+
+                    function_load = await page.is_visible('#klikfctie a')
+                    if function_load:
+                        print("FUNCTIONS LOADING")
+                        await page.click('#klikfctie a')
+                        await page.wait_for_load_state('networkidle')
+                        await page.wait_for_timeout(1000)
+
+                        await page.wait_for_selector('#toonfctie')
+
+                        function_rows = await page.query_selector_all('#toonfctie tr')
+                        for row in function_rows:
+                            cells = await row.query_selector_all('td')
+                            if len(cells) >= 2:
+                                function_title = await cells[0].text_content()
+                                function_name = await cells[1].text_content()
+                                logger.info(f"Found function: {function_title.strip()} - {function_name.strip()}")
+                                results.append({
+                                    'company_number': number,
+                                    'function_title': function_title.strip(),
+                                    'function_name': function_name.strip()
+                                })
+                    else:
+                        function_rows = await page.query_selector_all('tr:has(td:nth-child(3))')
+                        if len(function_rows) > 0:
+                            print("FUNCTIONS DETECTED!!!")
+                            for row in function_rows:
+                                cells = await row.query_selector_all('td')
+                                if len(cells) == 3:
+                                    function_title = await cells[0].text_content()
+                                    second_cell_class = await cells[1].get_attribute('class')
+                                    if second_cell_class in ['QL', 'RL']:
+                                        function_name = await cells[1].text_content()
+                                        print(f"Found function: {function_title.strip()} - {function_name.strip()}")
+                                        results.append({
+                                            'company_number': number,
+                                            'function_title': function_title.strip(),
+                                            'function_name': function_name.strip()
+                                        })
+                        else:
+                            logger.info(f"Company {number} has no functions visible, skipping...")
+                            await page.wait_for_timeout(3000)
+                            await page.goto(self.kbo_base_url + "/zoeknummerform.html")
+                            continue
+
+                    print(results)
+                    logger.info(f"Successfully searched number: {number}")
                     await page.wait_for_timeout(3000)
-                    
                     await page.goto(self.kbo_base_url + "/zoeknummerform.html")
                     
                 except Exception as e:
                     logger.error(f"Error searching number {number}: {str(e)}")
                     continue
+
+
+            if len(results) > 0:
+                df = pd.DataFrame(results)
                 
-            return results
+                df['function_title'] = df['function_title'].apply(lambda x: unicodedata.normalize('NFKD', x.strip()).encode('ASCII', 'ignore').decode())
+                
+                def process_name(text):
+                    text = text.strip()
+                    first_name = ""
+                    last_name = ""
+                    company_number = ""
+                    
+                    if all(c.isdigit() or c in '().,' for c in text.replace(' ', '')):
+                        company_number = text.strip('() ')
+                    else:
+                        if '(' in text and ')' in text:
+                            company_number = text[text.find('(')+1:text.find(')')].strip()
+                            text = text.split('(')[0].strip()
+                        
+                        if text:
+                            parts = text.split(',', 1)
+                            if len(parts) > 1:
+                                last_name = parts[0].strip()
+                                first_name = parts[1].strip()
+                            else:
+                                parts = text.strip().split()
+                                last_name = parts[0] if parts else ""
+                                first_name = ' '.join(parts[1:]) if len(parts) > 1 else ""
+                    
+                    return pd.Series([first_name, last_name, company_number])
+                
+                df[['first_name', 'last_name', 'person_company_number']] = df['function_name'].apply(process_name)
+                
+                df = df.drop('function_name', axis=1)
+                
+                df = df[['company_number', 'function_title', 'first_name', 'last_name', 'person_company_number']]
+                
+                excel_filename = f"company_functions.xlsx"
+                
+                df.to_excel(excel_filename, index=False)
+                logger.info(f"Results saved to {excel_filename}")
+            else:
+                logger.info("No results to save")
             
         finally:
             await browser.close()
@@ -131,16 +222,16 @@ class BelgianCompanyScraper:
     async def scrape_all(self):
         """Main scraping process"""
 
-        company_numbers = await self.scrape_opencorporates()
-        logger.info(f"Found {len(company_numbers)} company numbers")
+        # company_numbers = await self.scrape_opencorporates()
+        # logger.info(f"Found {len(company_numbers)} company numbers")
 
         filename = f"company_numbers.txt"
         
-        with open(filename, 'w') as f:
-            for number in company_numbers:
-                f.write(f"{number}\n")
+        # with open(filename, 'w') as f:
+        #     for number in company_numbers:
+        #         f.write(f"{number}\n")
         
-        logger.info(f"Saved company numbers to {filename}")
+        # logger.info(f"Saved company numbers to {filename}")
         
         logger.info("Starting KBO searches...")
         await self.search_kbo_numbers(filename)
