@@ -117,6 +117,25 @@ class BelgianCompanyScraper:
                         await page.goto(self.kbo_base_url + "/zoeknummerform.html")
                         continue
 
+                    # Get company name when active
+                    company_name = ""
+                    company_name_element = await page.query_selector('//tr[7]/td[2]')
+                    if company_name_element:
+                        company_name = await company_name_element.evaluate('node => node.firstChild.textContent')
+                        if company_name:
+                            company_name = company_name.strip('" ')  
+
+                                        # Try to get email
+                    email = ""
+                    try:
+                        email_element = await page.query_selector("//tr[12]/td[2]/table//a")
+                        if email_element:
+                            email_text = await email_element.text_content()
+                            if '@' in email_text:
+                                email = email_text.strip()
+                    except Exception as e:
+                        logger.debug(f"No email found for company {number}")
+
                     function_load = await page.is_visible('#klikfctie a')
                     if function_load:
                         print("FUNCTIONS LOADING")
@@ -135,6 +154,8 @@ class BelgianCompanyScraper:
                                 logger.info(f"Found function: {function_title.strip()} - {function_name.strip()}")
                                 results.append({
                                     'company_number': number,
+                                    'company_name': company_name,
+                                    'email': email,
                                     'function_title': function_title.strip(),
                                     'function_name': function_name.strip()
                                 })
@@ -152,6 +173,8 @@ class BelgianCompanyScraper:
                                         print(f"Found function: {function_title.strip()} - {function_name.strip()}")
                                         results.append({
                                             'company_number': number,
+                                            'company_name': company_name,
+                                            'email': email,
                                             'function_title': function_title.strip(),
                                             'function_name': function_name.strip()
                                         })
@@ -169,7 +192,6 @@ class BelgianCompanyScraper:
                 except Exception as e:
                     logger.error(f"Error searching number {number}: {str(e)}")
                     continue
-
 
             if len(results) > 0:
                 df = pd.DataFrame(results)
@@ -205,7 +227,7 @@ class BelgianCompanyScraper:
                 
                 df = df.drop('function_name', axis=1)
                 
-                df = df[['company_number', 'function_title', 'first_name', 'last_name', 'person_company_number']]
+                df = df[['company_number', 'company_name', 'email', 'function_title', 'first_name', 'last_name', 'person_company_number']]
                 
                 excel_filename = f"company_functions.xlsx"
                 
