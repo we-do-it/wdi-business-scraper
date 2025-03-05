@@ -7,6 +7,7 @@ from playwright.async_api import async_playwright, Browser, Page
 from datetime import datetime
 import re
 import unicodedata
+import os
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -71,8 +72,6 @@ class BelgianCompanyScraper:
                             company_numbers.add(match.group(1))
                 
                 logger.info(f"Total unique company numbers so far: {len(company_numbers)}")
-                
-                # print(company_numbers)
 
                 next_button = await page.query_selector('.next_page [href]')
                 if not next_button:
@@ -87,6 +86,34 @@ class BelgianCompanyScraper:
             await playwright.stop()
         
         return company_numbers
+
+    async def clean_company_numbers(self, active_file: str, inactive_file: str):
+        """Remove inactive company numbers from the active companies list"""
+        try:
+            # Read inactive companies
+            inactive_companies = set()
+            if os.path.exists(inactive_file):
+                with open(inactive_file, 'r') as f:
+                    inactive_companies = set(line.strip() for line in f)
+            
+            # Read and clean active companies
+            active_companies = set()
+            if os.path.exists(active_file):
+                with open(active_file, 'r') as f:
+                    active_companies = set(line.strip() for line in f)
+            
+            # Remove inactive companies from active list
+            cleaned_companies = active_companies - inactive_companies
+            
+            # Write back cleaned list
+            with open(active_file, 'w') as f:
+                for number in cleaned_companies:
+                    f.write(f"{number}\n")
+            
+            logger.info(f"Cleaned company numbers list. Removed {len(inactive_companies)} inactive companies.")
+            
+        except Exception as e:
+            logger.error(f"Error cleaning company numbers: {str(e)}")
 
     async def search_kbo_numbers(self, filename: str):
         """Search company numbers on KBO website"""
@@ -103,6 +130,8 @@ class BelgianCompanyScraper:
             logger.info(f"Found {len(company_numbers)} numbers to search")
             
             results = []
+            inactive_companies = set()
+            
             for number in company_numbers:
                 try:
                     await page.wait_for_selector('#nummer')
@@ -112,12 +141,15 @@ class BelgianCompanyScraper:
 
                     is_active = await page.is_visible('.pageactief')
                     if not is_active:
-                        logger.info(f"Company {number} is not active, skipping...")
+                        logger.info(f"Company {number} is not active, adding to inactive list...")
+                        inactive_companies.add(number)
+                        # Write to inactive companies file
+                        with open("inactive_companies.txt", "a") as f:
+                            f.write(f"{number}\n")
                         await page.wait_for_timeout(3000)
                         await page.goto(self.kbo_base_url + "/zoeknummerform.html")
                         continue
 
-                    # Get company name when active
                     company_name = ""
                     company_name_element = await page.query_selector('//tr[7]/td[2]')
                     if company_name_element:
@@ -125,7 +157,6 @@ class BelgianCompanyScraper:
                         if company_name:
                             company_name = company_name.strip('" ')  
 
-                                        # Try to get email
                     email = ""
                     try:
                         email_element = await page.query_selector("//tr[12]/td[2]/table//a")
@@ -184,7 +215,7 @@ class BelgianCompanyScraper:
                             await page.goto(self.kbo_base_url + "/zoeknummerform.html")
                             continue
 
-                    print(results)
+                    # print(results)
                     logger.info(f"Successfully searched number: {number}")
                     await page.wait_for_timeout(3000)
                     await page.goto(self.kbo_base_url + "/zoeknummerform.html")
@@ -193,6 +224,9 @@ class BelgianCompanyScraper:
                     logger.error(f"Error searching number {number}: {str(e)}")
                     continue
 
+            # After processing all companies, clean up the company numbers list
+            await self.clean_company_numbers(filename, "inactive_companies.txt")
+            
             if len(results) > 0:
                 df = pd.DataFrame(results)
                 
