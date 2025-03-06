@@ -90,22 +90,18 @@ class BelgianCompanyScraper:
     async def clean_company_numbers(self, active_file: str, inactive_file: str):
         """Remove inactive company numbers from the active companies list"""
         try:
-            # Read inactive companies
             inactive_companies = set()
             if os.path.exists(inactive_file):
                 with open(inactive_file, 'r') as f:
                     inactive_companies = set(line.strip() for line in f)
             
-            # Read and clean active companies
             active_companies = set()
             if os.path.exists(active_file):
                 with open(active_file, 'r') as f:
                     active_companies = set(line.strip() for line in f)
             
-            # Remove inactive companies from active list
             cleaned_companies = active_companies - inactive_companies
             
-            # Write back cleaned list
             with open(active_file, 'w') as f:
                 for number in cleaned_companies:
                     f.write(f"{number}\n")
@@ -143,7 +139,6 @@ class BelgianCompanyScraper:
                     if not is_active:
                         logger.info(f"Company {number} is not active, adding to inactive list...")
                         inactive_companies.add(number)
-                        # Write to inactive companies file
                         with open("inactive_companies.txt", "a") as f:
                             f.write(f"{number}\n")
                         await page.wait_for_timeout(3000)
@@ -224,7 +219,6 @@ class BelgianCompanyScraper:
                     logger.error(f"Error searching number {number}: {str(e)}")
                     continue
 
-            # After processing all companies, clean up the company numbers list
             await self.clean_company_numbers(filename, "inactive_companies.txt")
             
             if len(results) > 0:
