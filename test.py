@@ -55,7 +55,7 @@ class BelgianCompanyScraper:
         
         try:
             while True:
-                # 1 page for testing
+                # 1 page for testing (change depending on needs afterwards)
                 if i >= 5:
                     break
 
@@ -164,7 +164,6 @@ class BelgianCompanyScraper:
 
                     function_load = await page.is_visible('#klikfctie a')
                     if function_load:
-                        print("FUNCTIONS LOADING")
                         await page.click('#klikfctie a')
                         await page.wait_for_load_state('networkidle')
                         await page.wait_for_timeout(1000)
@@ -188,7 +187,6 @@ class BelgianCompanyScraper:
                     else:
                         function_rows = await page.query_selector_all('tr:has(td:nth-child(3))')
                         if len(function_rows) > 0:
-                            print("FUNCTIONS DETECTED!!!")
                             for row in function_rows:
                                 cells = await row.query_selector_all('td')
                                 if len(cells) == 3:
@@ -210,7 +208,6 @@ class BelgianCompanyScraper:
                             await page.goto(self.kbo_base_url + "/zoeknummerform.html")
                             continue
 
-                    # print(results)
                     logger.info(f"Successfully searched number: {number}")
                     await page.wait_for_timeout(3000)
                     await page.goto(self.kbo_base_url + "/zoeknummerform.html")
@@ -220,58 +217,68 @@ class BelgianCompanyScraper:
                     continue
 
             await self.clean_company_numbers(filename, "inactive_companies.txt")
-            
-            if len(results) > 0:
-                df = pd.DataFrame(results)
                 
-                df['function_title'] = df['function_title'].apply(lambda x: unicodedata.normalize('NFKD', x.strip()).encode('ASCII', 'ignore').decode())
-                
-                def process_name(text):
-                    text = text.strip()
-                    first_name = ""
-                    last_name = ""
-                    company_number = ""
-                    
-                    if all(c.isdigit() or c in '().,' for c in text.replace(' ', '')):
-                        company_number = text.strip('() ')
-                    else:
-                        if '(' in text and ')' in text:
-                            company_number = text[text.find('(')+1:text.find(')')].strip()
-                            text = text.split('(')[0].strip()
-                        
-                        if text:
-                            parts = text.split(',', 1)
-                            if len(parts) > 1:
-                                last_name = parts[0].strip()
-                                first_name = parts[1].strip()
-                            else:
-                                parts = text.strip().split()
-                                last_name = parts[0] if parts else ""
-                                first_name = ' '.join(parts[1:]) if len(parts) > 1 else ""
-                    
-                    return pd.Series([first_name, last_name, company_number])
-                
-                df[['first_name', 'last_name', 'person_company_number']] = df['function_name'].apply(process_name)
-                
-                df = df.drop('function_name', axis=1)
-                
-                df = df[['company_number', 'company_name', 'email', 'function_title', 'first_name', 'last_name', 'person_company_number']]
-                
-                excel_filename = f"company_functions.xlsx"
-                
-                df.to_excel(excel_filename, index=False)
-                logger.info(f"Results saved to {excel_filename}")
+            if results:
+                with open("company_data.json", "w") as f:
+                    json.dump(results, f)
+                logger.info("Results saved to company_data.json")
+                return results
             else:
-                logger.info("No results to save")
-            
+                logger.info("No results found")
+                return []
+
         finally:
             await browser.close()
             await playwright.stop()
     
+    def save_to_excel(self, results: List[Dict[str, Any]], output_filename: str = "company_functions.xlsx"):
+        """Save the scraped results to an Excel file"""
+        if len(results) > 0:
+            df = pd.DataFrame(results)
+            
+            df['function_title'] = df['function_title'].apply(lambda x: unicodedata.normalize('NFKD', x.strip()).encode('ASCII', 'ignore').decode())
+            
+            def process_name(text):
+                text = text.strip()
+                first_name = ""
+                last_name = ""
+                company_number = ""
+                
+                if all(c.isdigit() or c in '().,' for c in text.replace(' ', '')):
+                    company_number = text.strip('() ')
+                else:
+                    if '(' in text and ')' in text:
+                        company_number = text[text.find('(')+1:text.find(')')].strip()
+                        text = text.split('(')[0].strip()
+                    
+                    if text:
+                        parts = text.split(',', 1)
+                        if len(parts) > 1:
+                            last_name = parts[0].strip()
+                            first_name = parts[1].strip()
+                        else:
+                            parts = text.strip().split()
+                            last_name = parts[0] if parts else ""
+                            first_name = ' '.join(parts[1:]) if len(parts) > 1 else ""
+                
+                return pd.Series([first_name, last_name, company_number])
+            
+            df[['first_name', 'last_name', 'person_company_number']] = df['function_name'].apply(process_name)
+            df = df.drop('function_name', axis=1)
+            df = df[['company_number', 'company_name', 'email', 'function_title', 'first_name', 'last_name', 'person_company_number']]
+            
+            excel_filename = f"company_functions.xlsx"
+            
+            df.to_excel(excel_filename, index=False)
+            logger.info(f"Results saved to {excel_filename}")
+        else:
+            logger.info("No results to save")
 
     async def scrape_all(self):
         """Main scraping process"""
 
+        # UNCOMMENT WHEN READY 
+        # 
         # company_numbers = await self.scrape_opencorporates()
         # logger.info(f"Found {len(company_numbers)} company numbers")
 
@@ -282,9 +289,12 @@ class BelgianCompanyScraper:
         #         f.write(f"{number}\n")
         
         # logger.info(f"Saved company numbers to {filename}")
+        # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
         
         logger.info("Starting KBO searches...")
-        await self.search_kbo_numbers(filename)
+        results = await self.search_kbo_numbers(filename)
+
+        self.save_to_excel(results)
 
 async def main():
     scraper = BelgianCompanyScraper()
